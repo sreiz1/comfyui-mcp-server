@@ -13,6 +13,7 @@ DEFAULT_MAPPING = {
     "model": ("4", "ckpt_name")
 }
 
+
 class ComfyUIClient:
     def __init__(self, base_url):
         self.base_url = base_url

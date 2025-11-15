@@ -9,9 +9,10 @@ payload = {
         "width": 512,
         "height": 512,
         "workflow_id": "basic_api_test",
-        "model": "v1-5-pruned-emaonly.ckpt"  # No extra quote
+        "model": "v1-5-pruned-emaonly-fp16.safetensors"
     })
 }
+
 
 async def test_mcp_server():
     uri = "ws://localhost:9000"
