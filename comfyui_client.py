@@ -2,15 +2,15 @@ import requests
 import json
 import time
 import logging
+import pathlib
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ComfyUIClient")
 
+# mapping of parameters to input keys (default is to use the parameter name)
 DEFAULT_MAPPING = {
-    "prompt": ("6", "text"),
-    "width": ("5", "width"),
-    "height": ("5", "height"),
-    "model": ("4", "ckpt_name")
+    "prompt": "text",
+    "model": "ckpt_name"
 }
 
 
@@ -34,6 +34,12 @@ class ComfyUIClient:
             logger.warning(f"Error fetching models: {e}")
             return []
 
+    def get_available_workflows(self):
+        """list available workflows in workflows directory"""
+        workflow_files = pathlib.Path('.').glob("workflows/*.json")
+        workflows = [wf.parts[-1].replace(".json", "") for wf in workflow_files]
+        return workflows
+
     def generate_image(self, prompt, width, height, workflow_id="basic_api_test", model=None):
         try:
             workflow_file = f"workflows/{workflow_id}.json"
@@ -51,11 +57,14 @@ class ComfyUIClient:
                 params["model"] = model
 
             for param_key, value in params.items():
-                if param_key in DEFAULT_MAPPING:
-                    node_id, input_key = DEFAULT_MAPPING[param_key]
-                    if node_id not in workflow:
-                        raise Exception(f"Node {node_id} not found in workflow {workflow_id}")
-                    workflow[node_id]["inputs"][input_key] = value
+                if value is None:
+                    continue
+                input_key = DEFAULT_MAPPING.get(param_key, param_key)
+                for node in workflow.values():
+                    if "inputs" in node and input_key in node["inputs"]:
+                        node["inputs"][input_key] = value
+                        break
+                raise Exception(f"input key {input_key} not found in workflow {workflow_id}")
 
             logger.info(f"Submitting workflow {workflow_id} to ComfyUI...")
             response = requests.post(f"{self.base_url}/prompt", json={"prompt": workflow})
@@ -65,7 +74,9 @@ class ComfyUIClient:
             prompt_id = response.json()["prompt_id"]
             logger.info(f"Queued workflow with prompt_id: {prompt_id}")
 
-            max_attempts = 30
+            max_attempts = 8
+            sleep_time = 1
+            start_t = time.time()
             for _ in range(max_attempts):
                 history = requests.get(f"{self.base_url}/history/{prompt_id}").json()
                 if history.get(prompt_id):
@@ -78,8 +89,10 @@ class ComfyUIClient:
                     image_url = f"{self.base_url}/view?filename={image_filename}&subfolder=&type=output"
                     logger.info(f"Generated image URL: {image_url}")
                     return image_url
-                time.sleep(1)
-            raise Exception(f"Workflow {prompt_id} didn’t complete within {max_attempts} seconds")
+                time.sleep(sleep_time)
+                sleep_time *= 2  # Exponential backoff
+            total_time = round(time.time() - start_t)
+            raise Exception(f"Workflow {prompt_id} didn’t complete within {total_time} seconds")
 
         except FileNotFoundError:
             raise Exception(f"Workflow file '{workflow_file}' not found")
