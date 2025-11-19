@@ -9,15 +9,15 @@ logger = logging.getLogger("ComfyUIClient")
 
 # mapping of parameters to input keys (default is to use the parameter name)
 DEFAULT_MAPPING = {
-    "prompt": "text",
-    "model": "ckpt_name"
+    "prompt": ("text", "prompt"),
+    "model": ("ckpt_name",),
 }
 
 
 class ComfyUIClient:
     def __init__(self, base_url):
         self.base_url = base_url
-        self.available_models = self._get_available_models()
+        self.available_models = None
 
     def _get_available_models(self):
         """Fetch list of available checkpoint models from ComfyUI"""
@@ -42,29 +42,7 @@ class ComfyUIClient:
 
     def generate_image(self, prompt, width, height, workflow_id="basic_api_test", model=None):
         try:
-            workflow_file = f"workflows/{workflow_id}.json"
-            with open(workflow_file, "r") as f:
-                workflow = json.load(f)
-
-            params = {"prompt": prompt, "width": width, "height": height}
-            if model:
-                # Validate or correct model name
-                if model.endswith("'"):  # Strip accidental quote
-                    model = model.rstrip("'")
-                    logger.info(f"Corrected model name: {model}")
-                if self.available_models and model not in self.available_models:
-                    raise Exception(f"Model '{model}' not in available models: {self.available_models}")
-                params["model"] = model
-
-            for param_key, value in params.items():
-                if value is None:
-                    continue
-                input_key = DEFAULT_MAPPING.get(param_key, param_key)
-                for node in workflow.values():
-                    if "inputs" in node and input_key in node["inputs"]:
-                        node["inputs"][input_key] = value
-                        break
-                raise Exception(f"input key {input_key} not found in workflow {workflow_id}")
+            workflow_file, workflow = self.get_workflow(prompt, width, height, workflow_id, model)
 
             logger.info(f"Submitting workflow {workflow_id} to ComfyUI...")
             response = requests.post(f"{self.base_url}/prompt", json={"prompt": workflow})
@@ -100,3 +78,34 @@ class ComfyUIClient:
             raise Exception(f"Workflow error - invalid node or input: {e}")
         except requests.RequestException as e:
             raise Exception(f"ComfyUI API error: {e}")
+
+    def get_workflow(self, prompt, width, height, workflow_id, model):
+        workflow_file = f"workflows/{workflow_id}.json"
+        with open(workflow_file, "r", encoding='utf8') as f:
+            workflow = json.load(f)
+
+        params = {"prompt": prompt, "width": width, "height": height}
+        if model:
+            model = model.replace("'", "")
+            if self.available_models is None:
+                self.available_models = self._get_available_models()
+            if self.available_models and model not in self.available_models:
+                raise Exception(f"Model '{model}' not in available models: {self.available_models}")
+            params["model"] = model
+
+        for param_key, value in params.items():
+            if value is None:
+                continue
+            input_keys = DEFAULT_MAPPING.get(param_key, (param_key,))
+            key_found = False
+            for node in workflow.values():
+                for input_key in input_keys:
+                    if "inputs" in node and input_key in node["inputs"]:
+                        node["inputs"][input_key] = value
+                        key_found = True
+                        break
+                if key_found:
+                    break
+            if not key_found:
+                raise Exception(f"input key {input_key} not found in workflow {workflow_id}")
+        return workflow_file, workflow
